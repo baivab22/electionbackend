@@ -8,26 +8,27 @@ const {
   createCandidate,
   updateCandidate,
   deleteCandidate,
-  addAchievement,
-  addIssue,
   searchCandidates,
   likeCandidate,
-  addComment,
-  getComments,
-  shareCandidate
+  shareCandidate,
+  registerCandidate,
+  verifyCandidate,
+  getCandidateStats
 } = require('../controllers/candidateController');
 
 const candidateFeedbackRouter = require('./candidateFeedback');
 
 // Public routes
 router.get('/search', searchCandidates);
+router.get('/stats', protect, authorize('admin'), getCandidateStats);
 router.get('/', getAllCandidates);
 router.get('/:id', getCandidate);
 
+// Public registration route (no auth required)
+router.post('/register', candidateUpload, registerCandidate);
+
 // Social engagement routes (Public)
 router.post('/:id/like', likeCandidate);
-router.post('/:id/comment', addComment);
-router.get('/:id/comments', getComments);
 router.post('/:id/share', shareCandidate);
 
 // Candidate feedback routes
@@ -36,8 +37,7 @@ router.use('/:candidateId/feedback', candidateFeedbackRouter);
 // Admin only routes
 router.post('/', protect, authorize('admin'), candidateUpload, createCandidate);
 router.put('/:id', protect, authorize('admin'), candidateUpload, updateCandidate);
+router.put('/:id/verify', protect, authorize('admin'), verifyCandidate);
 router.delete('/:id', protect, authorize('admin'), deleteCandidate);
-router.post('/:id/achievements', protect, authorize('admin'), addAchievement);
-router.post('/:id/issues', protect, authorize('admin'), addIssue);
 
 module.exports = router;

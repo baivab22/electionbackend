@@ -3,20 +3,41 @@ const { validationResult } = require('express-validator');
 const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
 
+// Helper function to parse nested objects from FormData
+const parseNestedObject = (obj, prefix) => {
+  const result = {};
+  const prefixPattern = `${prefix}[`;
+  
+  Object.keys(obj).forEach(key => {
+    if (key.startsWith(prefixPattern)) {
+      const match = key.match(new RegExp(`^${prefix}\\[([^\\]]+)\\]$`));
+      if (match) {
+        const nestedKey = match[1];
+        result[nestedKey] = obj[key];
+      }
+    }
+  });
+  
+  return Object.keys(result).length > 0 ? result : null;
+};
+
 // @desc    Get all candidates
 // @route   GET /api/candidates
 // @access  Public
 exports.getAllCandidates = async (req, res) => {
   try {
-    const { position, isActive } = req.query;
+    const { position, isActive, constituency, partyName, candidacyLevel } = req.query;
     
     let query = {};
     if (position) query['personalInfo.position'] = position;
     if (isActive !== undefined) query.isActive = isActive === 'true';
+    if (constituency) query['politicalInfo.constituency'] = { $regex: constituency, $options: 'i' };
+    if (partyName) query['politicalInfo.partyName'] = { $regex: partyName, $options: 'i' };
+    if (candidacyLevel) query['politicalInfo.candidacyLevel'] = candidacyLevel;
 
     const candidates = await Candidate.find(query)
-      .select('-manifesto.manifestoBrochure') // Exclude heavy files from list
-      .populate('createdBy', 'name email');
+      .select('-documents') // Exclude document fields from list
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -38,8 +59,7 @@ exports.getAllCandidates = async (req, res) => {
 // @access  Public
 exports.getCandidate = async (req, res) => {
   try {
-    const candidate = await Candidate.findById(req.params.id)
-      .populate('createdBy', 'name email');
+    const candidate = await Candidate.findById(req.params.id);
 
     if (!candidate) {
       return res.status(404).json({
@@ -64,7 +84,7 @@ exports.getCandidate = async (req, res) => {
 
 // @desc    Create new candidate
 // @route   POST /api/candidates
-// @access  Private (Admin only)
+// @access  Private (Admin only) or Public for registration
 exports.createCandidate = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -75,82 +95,67 @@ exports.createCandidate = async (req, res) => {
       });
     }
 
-    // Parse nested objects from FormData structure
-    const parseNestedObject = (obj, prefix) => {
-      const result = {};
-      const prefixPattern = `${prefix}[`;
-      
-      Object.keys(obj).forEach(key => {
-        if (key.startsWith(prefixPattern)) {
-          // Extract the nested key: "personalInfo[email]" -> "email"
-          const match = key.match(new RegExp(`^${prefix}\\[([^\\]]+)\\]$`));
-          if (match) {
-            const nestedKey = match[1];
-            result[nestedKey] = obj[key];
-          }
-        }
-      });
-      
-      return Object.keys(result).length > 0 ? result : null;
-    };
+    // Parse all nested objects from FormData
+    const personalInfo = parseNestedObject(req.body, 'personalInfo') || req.body.personalInfo || {};
+    const politicalInfo = parseNestedObject(req.body, 'politicalInfo') || req.body.politicalInfo || {};
+    const education = parseNestedObject(req.body, 'education') || req.body.education || {};
+    const professionalExperience = parseNestedObject(req.body, 'professionalExperience') || req.body.professionalExperience || {};
+    const politicalExperience = parseNestedObject(req.body, 'politicalExperience') || req.body.politicalExperience || {};
+    const socialEngagement = parseNestedObject(req.body, 'socialEngagement') || req.body.socialEngagement || {};
+    const financialInfo = parseNestedObject(req.body, 'financialInfo') || req.body.financialInfo || {};
+    const legalStatus = parseNestedObject(req.body, 'legalStatus') || req.body.legalStatus || {};
+    const visionGoals = parseNestedObject(req.body, 'visionGoals') || req.body.visionGoals || {};
+    const socialMedia = parseNestedObject(req.body, 'socialMedia') || req.body.socialMedia || {};
+    const campaign = parseNestedObject(req.body, 'campaign') || req.body.campaign || {};
+    const documents = parseNestedObject(req.body, 'documents') || req.body.documents || {};
 
-    const personalInfo = parseNestedObject(req.body, 'personalInfo') || req.body.personalInfo;
-    const biography = parseNestedObject(req.body, 'biography') || req.body.biography;
-    const manifesto = parseNestedObject(req.body, 'manifesto') || req.body.manifesto;
-    const socialMedia = parseNestedObject(req.body, 'socialMedia') || req.body.socialMedia;
-    
-    // Parse achievements array
-    let achievements = [];
-    if (req.body.achievements) {
-      if (Array.isArray(req.body.achievements)) {
-        achievements = req.body.achievements;
-      } else {
-        // Parse achievements from FormData format
-        const achievementKeys = Object.keys(req.body).filter(k => k.startsWith('achievements['));
-        const achievementIndexes = [...new Set(achievementKeys.map(k => k.match(/\[(\d+)\]/)?.[1]).filter(Boolean))];
-        achievements = achievementIndexes.map(index => ({
-          achievementTitle_en: req.body[`achievements[${index}][achievementTitle_en]`],
-          achievementDescription_en: req.body[`achievements[${index}][achievementDescription_en]`],
-          achievementDate: req.body[`achievements[${index}][achievementDate]`],
-          achievementCategory: req.body[`achievements[${index}][achievementCategory]`],
-        })).filter(a => a.achievementTitle_en);
-      }
-    }
-
-    const issues = req.body.issues || [];
-    const campaign = req.body.campaign || {};
-
-    // Handle file uploads from multer
-    let profilePhotoPath = biography?.profilePhoto || null;
-    let manifestoBrochurePath = manifesto?.manifestoBrochure || null;
+    // Handle file uploads
+    let profilePhotoPath = personalInfo.profilePhoto || null;
+    let electionSymbolImagePath = politicalInfo.electionSymbolImage || null;
 
     if (req.files) {
-      // Multer with fields() puts files in an object with field names as keys
+      // Profile photo upload
       if (req.files.profilePhoto && req.files.profilePhoto[0]) {
-        profilePhotoPath = req.files.profilePhoto[0].path; // Cloudinary URL
+        profilePhotoPath = req.files.profilePhoto[0].path;
       }
-
-      if (req.files.manifestoBrochure && req.files.manifestoBrochure[0]) {
-        manifestoBrochurePath = req.files.manifestoBrochure[0].path; // Cloudinary URL
+      // Election symbol image upload
+      if (req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
+        electionSymbolImagePath = req.files.electionSymbolImage[0].path;
       }
     }
 
+    // Handle single file upload
+    if (req.file) {
+      profilePhotoPath = req.file.path;
+    }
+
+    // Build candidate data
     const candidateData = {
-      personalInfo,
-      biography: {
-        ...biography,
-        profilePhoto: profilePhotoPath || biography?.profilePhoto
+      personalInfo: {
+        ...personalInfo,
+        profilePhoto: profilePhotoPath
       },
-      manifesto: {
-        ...manifesto,
-        manifestoBrochure: manifestoBrochurePath || manifesto?.manifestoBrochure
+      politicalInfo: {
+        ...politicalInfo,
+        electionSymbolImage: electionSymbolImagePath,
+        isFirstTimeCandidate: politicalInfo.isFirstTimeCandidate === 'true' || politicalInfo.isFirstTimeCandidate === true
       },
-      socialMedia: socialMedia || {},
-      issues,
-      achievements,
+      education,
+      professionalExperience,
+      politicalExperience,
+      socialEngagement,
+      financialInfo,
+      legalStatus: {
+        ...legalStatus,
+        hasCriminalCase: legalStatus.hasCriminalCase === 'true' || legalStatus.hasCriminalCase === true
+      },
+      visionGoals,
+      socialMedia,
       campaign,
+      documents,
       isActive: req.body.isActive === 'true' || req.body.isActive === true,
-      createdBy: req.user.id
+      isVerified: false, // Default to not verified
+      createdBy: req.user ? req.user.id : null
     };
 
     const candidate = new Candidate(candidateData);
@@ -166,6 +171,75 @@ exports.createCandidate = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while creating candidate',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Public registration - Create new candidate (no auth required)
+// @route   POST /api/candidates/register
+// @access  Public
+exports.registerCandidate = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    let candidateData = req.body;
+    
+    // Handle file upload
+    if (req.file) {
+      candidateData.personalInfo = {
+        ...candidateData.personalInfo,
+        profilePhoto: req.file.path
+      };
+    }
+
+    if (req.files) {
+      if (req.files.profilePhoto && req.files.profilePhoto[0]) {
+        candidateData.personalInfo = {
+          ...candidateData.personalInfo,
+          profilePhoto: req.files.profilePhoto[0].path
+        };
+      }
+    }
+
+    // Ensure booleans are properly parsed
+    if (candidateData.politicalInfo) {
+      candidateData.politicalInfo.isFirstTimeCandidate = 
+        candidateData.politicalInfo.isFirstTimeCandidate === 'true' || 
+        candidateData.politicalInfo.isFirstTimeCandidate === true;
+    }
+
+    if (candidateData.legalStatus) {
+      candidateData.legalStatus.hasCriminalCase = 
+        candidateData.legalStatus.hasCriminalCase === 'true' || 
+        candidateData.legalStatus.hasCriminalCase === true;
+    }
+
+    // Set default values for new registrations
+    candidateData.isActive = false; // Needs admin approval
+    candidateData.isVerified = false;
+    candidateData.likes = 0;
+    candidateData.shares = 0;
+
+    const candidate = new Candidate(candidateData);
+    await candidate.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'उम्मेदवार दर्ता सफल भयो। प्रशासकबाट अनुमोदन पछि प्रकाशित हुनेछ। / Registration successful. Will be published after admin approval.',
+      data: { id: candidate._id }
+    });
+  } catch (error) {
+    console.error('Error registering candidate:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while registering candidate',
       error: error.message
     });
   }
@@ -193,71 +267,76 @@ exports.updateCandidate = async (req, res) => {
       });
     }
 
-    // Parse nested objects from FormData structure
-    const parseNestedObject = (obj, prefix) => {
-      const result = {};
-      const prefixPattern = `${prefix}[`;
-      
-      Object.keys(obj).forEach(key => {
-        if (key.startsWith(prefixPattern)) {
-          // Extract the nested key: "personalInfo[email]" -> "email"
-          const match = key.match(new RegExp(`^${prefix}\\[([^\\]]+)\\]$`));
-          if (match) {
-            const nestedKey = match[1];
-            result[nestedKey] = obj[key];
-          }
-        }
-      });
-      
-      return Object.keys(result).length > 0 ? result : null;
-    };
-
+    // Parse all nested objects from FormData
     const personalInfo = parseNestedObject(req.body, 'personalInfo') || req.body.personalInfo;
-    const biography = parseNestedObject(req.body, 'biography') || req.body.biography;
-    const manifesto = parseNestedObject(req.body, 'manifesto') || req.body.manifesto;
+    const politicalInfo = parseNestedObject(req.body, 'politicalInfo') || req.body.politicalInfo;
+    const education = parseNestedObject(req.body, 'education') || req.body.education;
+    const professionalExperience = parseNestedObject(req.body, 'professionalExperience') || req.body.professionalExperience;
+    const politicalExperience = parseNestedObject(req.body, 'politicalExperience') || req.body.politicalExperience;
+    const socialEngagement = parseNestedObject(req.body, 'socialEngagement') || req.body.socialEngagement;
+    const financialInfo = parseNestedObject(req.body, 'financialInfo') || req.body.financialInfo;
+    const legalStatus = parseNestedObject(req.body, 'legalStatus') || req.body.legalStatus;
+    const visionGoals = parseNestedObject(req.body, 'visionGoals') || req.body.visionGoals;
     const socialMedia = parseNestedObject(req.body, 'socialMedia') || req.body.socialMedia;
-    
-    // Parse achievements array
-    let achievements = candidate.achievements;
-    if (req.body.achievements) {
-      if (Array.isArray(req.body.achievements)) {
-        achievements = req.body.achievements;
-      } else {
-        // Parse achievements from FormData format
-        const achievementKeys = Object.keys(req.body).filter(k => k.startsWith('achievements['));
-        const achievementIndexes = [...new Set(achievementKeys.map(k => k.match(/\[(\d+)\]/)?.[1]).filter(Boolean))];
-        if (achievementIndexes.length > 0) {
-          achievements = achievementIndexes.map(index => ({
-            achievementTitle_en: req.body[`achievements[${index}][achievementTitle_en]`],
-            achievementDescription_en: req.body[`achievements[${index}][achievementDescription_en]`],
-            achievementDate: req.body[`achievements[${index}][achievementDate]`],
-            achievementCategory: req.body[`achievements[${index}][achievementCategory]`],
-          })).filter(a => a.achievementTitle_en);
-        }
-      }
-    }
+    const campaign = parseNestedObject(req.body, 'campaign') || req.body.campaign;
+    const documents = parseNestedObject(req.body, 'documents') || req.body.documents;
 
-    // Handle file uploads from multer
-    let profilePhotoPath = biography?.profilePhoto;
-    let manifestoBrochurePath = manifesto?.manifestoBrochure;
+    // Handle file uploads
+    let profilePhotoPath = candidate.personalInfo?.profilePhoto;
+    let electionSymbolImagePath = candidate.politicalInfo?.electionSymbolImage;
 
     if (req.files) {
       if (req.files.profilePhoto && req.files.profilePhoto[0]) {
-        profilePhotoPath = req.files.profilePhoto[0].path; // Cloudinary URL
+        profilePhotoPath = req.files.profilePhoto[0].path;
       }
-
-      if (req.files.manifestoBrochure && req.files.manifestoBrochure[0]) {
-        manifestoBrochurePath = req.files.manifestoBrochure[0].path; // Cloudinary URL
+      if (req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
+        electionSymbolImagePath = req.files.electionSymbolImage[0].path;
       }
     }
 
-    // Update candidate data
-    if (personalInfo) candidate.personalInfo = { ...candidate.personalInfo, ...personalInfo };
-    if (biography) candidate.biography = { ...candidate.biography, ...biography, profilePhoto: profilePhotoPath || candidate.biography.profilePhoto };
-    if (manifesto) candidate.manifesto = { ...candidate.manifesto, ...manifesto, manifestoBrochure: manifestoBrochurePath || candidate.manifesto.manifestoBrochure };
-    if (socialMedia) candidate.socialMedia = { ...candidate.socialMedia, ...socialMedia };
-    if (achievements) candidate.achievements = achievements;
+    if (req.file) {
+      profilePhotoPath = req.file.path;
+    }
+
+    // Update fields if provided
+    if (personalInfo) {
+      candidate.personalInfo = { 
+        ...candidate.personalInfo?.toObject?.() || candidate.personalInfo, 
+        ...personalInfo,
+        profilePhoto: profilePhotoPath
+      };
+    }
+    
+    if (politicalInfo) {
+      candidate.politicalInfo = { 
+        ...candidate.politicalInfo?.toObject?.() || candidate.politicalInfo, 
+        ...politicalInfo,
+        electionSymbolImage: electionSymbolImagePath,
+        isFirstTimeCandidate: politicalInfo.isFirstTimeCandidate === 'true' || politicalInfo.isFirstTimeCandidate === true
+      };
+    }
+    
+    if (education) candidate.education = { ...candidate.education?.toObject?.() || candidate.education, ...education };
+    if (professionalExperience) candidate.professionalExperience = { ...candidate.professionalExperience?.toObject?.() || candidate.professionalExperience, ...professionalExperience };
+    if (politicalExperience) candidate.politicalExperience = { ...candidate.politicalExperience?.toObject?.() || candidate.politicalExperience, ...politicalExperience };
+    if (socialEngagement) candidate.socialEngagement = { ...candidate.socialEngagement?.toObject?.() || candidate.socialEngagement, ...socialEngagement };
+    if (financialInfo) candidate.financialInfo = { ...candidate.financialInfo?.toObject?.() || candidate.financialInfo, ...financialInfo };
+    
+    if (legalStatus) {
+      candidate.legalStatus = { 
+        ...candidate.legalStatus?.toObject?.() || candidate.legalStatus, 
+        ...legalStatus,
+        hasCriminalCase: legalStatus.hasCriminalCase === 'true' || legalStatus.hasCriminalCase === true
+      };
+    }
+    
+    if (visionGoals) candidate.visionGoals = { ...candidate.visionGoals?.toObject?.() || candidate.visionGoals, ...visionGoals };
+    if (socialMedia) candidate.socialMedia = { ...candidate.socialMedia?.toObject?.() || candidate.socialMedia, ...socialMedia };
+    if (campaign) candidate.campaign = { ...candidate.campaign?.toObject?.() || candidate.campaign, ...campaign };
+    if (documents) candidate.documents = { ...candidate.documents?.toObject?.() || candidate.documents, ...documents };
+    
     if (req.body.isActive !== undefined) candidate.isActive = req.body.isActive === 'true' || req.body.isActive === true;
+    if (req.body.isVerified !== undefined) candidate.isVerified = req.body.isVerified === 'true' || req.body.isVerified === true;
 
     await candidate.save();
 
@@ -290,23 +369,6 @@ exports.deleteCandidate = async (req, res) => {
       });
     }
 
-    // Delete associated files
-    if (candidate.biography.profilePhoto) {
-      try {
-        fs.unlinkSync(candidate.biography.profilePhoto);
-      } catch (err) {
-        console.log('Could not delete profile photo');
-      }
-    }
-
-    if (candidate.manifesto.manifestoBrochure) {
-      try {
-        fs.unlinkSync(candidate.manifesto.manifestoBrochure);
-      } catch (err) {
-        console.log('Could not delete manifesto brochure');
-      }
-    }
-
     res.status(200).json({
       success: true,
       message: 'Candidate deleted successfully',
@@ -322,139 +384,13 @@ exports.deleteCandidate = async (req, res) => {
   }
 };
 
-// @desc    Add achievement to candidate
-// @route   POST /api/candidates/:id/achievements
-// @access  Private (Admin only)
-exports.addAchievement = async (req, res) => {
-  try {
-    const candidate = await Candidate.findById(req.params.id);
-
-    if (!candidate) {
-      return res.status(404).json({
-        success: false,
-        message: 'Candidate not found'
-      });
-    }
-
-    const achievement = req.body;
-
-    // Handle file upload for achievement image
-    if (req.files && req.files.achievementImage) {
-      const image = req.files.achievementImage;
-      const uploadPath = `${process.env.UPLOAD_DIR || './uploads/candidates'}/achievements/${Date.now()}-${image.name}`;
-      
-      const dir = require('path').dirname(uploadPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      
-      await image.mv(uploadPath);
-      achievement.achievementImage = uploadPath;
-    }
-
-    candidate.achievements.push(achievement);
-    await candidate.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Achievement added successfully',
-      data: candidate
-    });
-  } catch (error) {
-    console.error('Error adding achievement:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while adding achievement',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Add issue to candidate
-// @route   POST /api/candidates/:id/issues
-// @access  Private (Admin only)
-exports.addIssue = async (req, res) => {
-  try {
-    const candidate = await Candidate.findById(req.params.id);
-
-    if (!candidate) {
-      return res.status(404).json({
-        success: false,
-        message: 'Candidate not found'
-      });
-    }
-
-    candidate.issues.push(req.body);
-    await candidate.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Issue added successfully',
-      data: candidate
-    });
-  } catch (error) {
-    console.error('Error adding issue:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while adding issue',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Search candidates
-// @route   GET /api/candidates/search
-// @access  Public
-exports.searchCandidates = async (req, res) => {
-  try {
-    const { query, position, constituency } = req.query;
-
-    let searchQuery = { isActive: true };
-
-    if (query) {
-      searchQuery.$or = [
-        { 'personalInfo.fullName': { $regex: query, $options: 'i' } },
-        { 'personalInfo.constituency': { $regex: query, $options: 'i' } }
-      ];
-    }
-
-    if (position) {
-      searchQuery['personalInfo.position'] = position;
-    }
-
-    if (constituency) {
-      searchQuery['personalInfo.constituency'] = { $regex: constituency, $options: 'i' };
-    }
-
-    const candidates = await Candidate.find(searchQuery)
-      .select('-manifesto.manifestoBrochure')
-      .populate('createdBy', 'name email')
-      .limit(20);
-
-    res.status(200).json({
-      success: true,
-      count: candidates.length,
-      data: candidates
-    });
-  } catch (error) {
-    console.error('Error searching candidates:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while searching candidates',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Like a candidate
+// @desc    Like/Unlike candidate
 // @route   POST /api/candidates/:id/like
 // @access  Public
 exports.likeCandidate = async (req, res) => {
   try {
-    const { id } = req.params;
-    const clientId = req.ip || req.headers['x-forwarded-for'] || 'anonymous';
+    const candidate = await Candidate.findById(req.params.id);
 
-    const candidate = await Candidate.findById(id);
     if (!candidate) {
       return res.status(404).json({
         success: false,
@@ -462,25 +398,24 @@ exports.likeCandidate = async (req, res) => {
       });
     }
 
-    // Check if already liked by this client
-    if (candidate.likedBy.includes(clientId)) {
-      // Unlike
-      candidate.likedBy = candidate.likedBy.filter(ip => ip !== clientId);
-      candidate.likes = Math.max(0, candidate.likes - 1);
+    // Get client IP or session identifier
+    const clientId = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip;
+    
+    // Simple toggle based on current state (in real app, track likes by user/IP)
+    const { action } = req.body; // 'like' or 'unlike'
+    
+    if (action === 'unlike') {
+      candidate.likes = Math.max(0, (candidate.likes || 0) - 1);
     } else {
-      // Like
-      candidate.likedBy.push(clientId);
-      candidate.likes += 1;
+      candidate.likes = (candidate.likes || 0) + 1;
     }
 
     await candidate.save();
 
     res.status(200).json({
       success: true,
-      data: {
-        likes: candidate.likes,
-        isLiked: candidate.likedBy.includes(clientId)
-      }
+      likes: candidate.likes,
+      isLiked: action !== 'unlike'
     });
   } catch (error) {
     console.error('Error liking candidate:', error);
@@ -492,99 +427,13 @@ exports.likeCandidate = async (req, res) => {
   }
 };
 
-// @desc    Add comment to candidate
-// @route   POST /api/candidates/:id/comment
-// @access  Public
-exports.addComment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, email, comment } = req.body;
-
-    if (!name || !comment) {
-      return res.status(400).json({
-        success: false,
-        message: 'Name and comment are required'
-      });
-    }
-
-    const candidate = await Candidate.findById(id);
-    if (!candidate) {
-      return res.status(404).json({
-        success: false,
-        message: 'Candidate not found'
-      });
-    }
-
-    candidate.comments.push({
-      name,
-      email,
-      comment,
-      createdAt: new Date(),
-      isApproved: false // Require admin approval
-    });
-
-    await candidate.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Comment submitted successfully. It will be visible after approval.',
-      data: {
-        totalComments: candidate.comments.length
-      }
-    });
-  } catch (error) {
-    console.error('Error adding comment:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while adding comment',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get approved comments for candidate
-// @route   GET /api/candidates/:id/comments
-// @access  Public
-exports.getComments = async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const candidate = await Candidate.findById(id).select('comments');
-    if (!candidate) {
-      return res.status(404).json({
-        success: false,
-        message: 'Candidate not found'
-      });
-    }
-
-    // Only return approved comments for public
-    const approvedComments = candidate.comments
-      .filter(comment => comment.isApproved)
-      .sort((a, b) => b.createdAt - a.createdAt);
-
-    res.status(200).json({
-      success: true,
-      count: approvedComments.length,
-      data: approvedComments
-    });
-  } catch (error) {
-    console.error('Error fetching comments:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching comments',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Increment share count
+// @desc    Share candidate (increment share count)
 // @route   POST /api/candidates/:id/share
 // @access  Public
 exports.shareCandidate = async (req, res) => {
   try {
-    const { id } = req.params;
+    const candidate = await Candidate.findById(req.params.id);
 
-    const candidate = await Candidate.findById(id);
     if (!candidate) {
       return res.status(404).json({
         success: false,
@@ -592,20 +441,152 @@ exports.shareCandidate = async (req, res) => {
       });
     }
 
-    candidate.shares += 1;
+    candidate.shares = (candidate.shares || 0) + 1;
     await candidate.save();
 
     res.status(200).json({
       success: true,
-      data: {
-        shares: candidate.shares
-      }
+      shares: candidate.shares
     });
   } catch (error) {
     console.error('Error sharing candidate:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while sharing candidate',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Verify candidate
+// @route   PUT /api/candidates/:id/verify
+// @access  Private (Admin only)
+exports.verifyCandidate = async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id);
+
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Candidate not found'
+      });
+    }
+
+    candidate.isVerified = req.body.isVerified !== false;
+    candidate.isActive = req.body.isActive !== false;
+    await candidate.save();
+
+    res.status(200).json({
+      success: true,
+      message: candidate.isVerified ? 'Candidate verified successfully' : 'Candidate unverified',
+      data: candidate
+    });
+  } catch (error) {
+    console.error('Error verifying candidate:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while verifying candidate',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get candidate statistics
+// @route   GET /api/candidates/stats
+// @access  Private (Admin only)
+exports.getCandidateStats = async (req, res) => {
+  try {
+    const totalCandidates = await Candidate.countDocuments();
+    const activeCandidates = await Candidate.countDocuments({ isActive: true });
+    const verifiedCandidates = await Candidate.countDocuments({ isVerified: true });
+    const pendingApproval = await Candidate.countDocuments({ isActive: false, isVerified: false });
+
+    // Get counts by candidacy level
+    const byLevel = await Candidate.aggregate([
+      {
+        $group: {
+          _id: '$politicalInfo.candidacyLevel',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get counts by party
+    const byParty = await Candidate.aggregate([
+      {
+        $group: {
+          _id: '$politicalInfo.partyName',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalCandidates,
+        activeCandidates,
+        verifiedCandidates,
+        pendingApproval,
+        byLevel,
+        byParty
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching candidate stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching statistics',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Search candidates
+// @route   GET /api/candidates/search
+// @access  Public
+exports.searchCandidates = async (req, res) => {
+  try {
+    const { q, constituency, partyName, candidacyLevel } = req.query;
+
+    let query = { isActive: true };
+
+    if (q) {
+      query.$or = [
+        { 'personalInfo.fullName': { $regex: q, $options: 'i' } },
+        { 'personalInfo.fullName_np': { $regex: q, $options: 'i' } },
+        { 'politicalInfo.constituency': { $regex: q, $options: 'i' } },
+        { 'politicalInfo.constituency_np': { $regex: q, $options: 'i' } }
+      ];
+    }
+
+    if (constituency) {
+      query['politicalInfo.constituency'] = { $regex: constituency, $options: 'i' };
+    }
+
+    if (partyName) {
+      query['politicalInfo.partyName'] = { $regex: partyName, $options: 'i' };
+    }
+
+    if (candidacyLevel) {
+      query['politicalInfo.candidacyLevel'] = candidacyLevel;
+    }
+
+    const candidates = await Candidate.find(query)
+      .select('personalInfo politicalInfo education likes shares isVerified')
+      .sort({ likes: -1 })
+      .limit(50);
+
+    res.status(200).json({
+      success: true,
+      count: candidates.length,
+      data: candidates
+    });
+  } catch (error) {
+    console.error('Error searching candidates:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while searching candidates',
       error: error.message
     });
   }
