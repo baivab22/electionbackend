@@ -396,20 +396,10 @@ app.use((err, req, res, next) => {
 });
 
 // ===== START SERVER =====
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log('\n========================================');
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 Server accessible at: http://localhost:${PORT}`);
-  console.log(`📁 Uploads directory: ${path.join(__dirname, 'uploads')}`);
-  console.log(`📸 Posts images: ${path.join(__dirname, 'uploads/posts')}`);
-  console.log(`🎥 YouTube Channel: ${YOUTUBE_CHANNEL_ID}`);
-  console.log(`🔑 YouTube API: ${YOUTUBE_API_KEY ? 'Configured' : 'Missing'}`);
-  console.log(`🔒 CORS: ${process.env.NODE_ENV === 'production' ? 'Production domains' : 'Development (localhost)'}`);
-  console.log(`⏱️  Rate Limit: 500 requests/15min`);
-  console.log('========================================\n');
+  console.log(`Server running on ${PORT}`);
 });
 
 // Handle unhandled promise rejections
