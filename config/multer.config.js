@@ -96,6 +96,10 @@ const candidateStorage = new CloudinaryStorage({
         folder = 'ictforum/candidates/photos';
         allowedFormats = ['jpg', 'jpeg', 'png', 'webp'];
         break;
+      case 'electionSymbolImage':
+        folder = 'ictforum/candidates/symbols';
+        allowedFormats = ['jpg', 'jpeg', 'png', 'webp'];
+        break;
       case 'manifestoBrochure':
         folder = 'ictforum/candidates/manifestos';
         allowedFormats = ['pdf', 'jpg', 'jpeg', 'png'];
@@ -140,6 +144,7 @@ const memberUpload = memberUploader.fields([
 const candidateUpload = candidateUploader.fields([
   { name: 'profilePhoto', maxCount: 1 },
   { name: 'manifestoBrochure', maxCount: 1 },
+  { name: 'electionSymbolImage', maxCount: 1 },
 ]);
 
 // ============================================================

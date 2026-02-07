@@ -30,14 +30,20 @@ const corsOptions = {
           'https://ictforum-frontend-j4i4dhx0i-baivabs-projects-31f870fd.vercel.app',
           'https://www.ictforumnepal.com',
           'https://ictforumnepal.com',
-          'https://ictforum-frontend.vercel.app'
+          'https://ictforum-frontend.vercel.app',
+          'https://nepalicommunists.org',
+          'https://www.nepalicommunists.org'
         ]
       : [
           'http://localhost:3000',
           'http://localhost:5173',
+          'http://localhost:5174',
+          'http://localhost:5175',
           'http://localhost:3001',
           'http://127.0.0.1:3000',
           'http://127.0.0.1:5173',
+          'http://127.0.0.1:5174',
+          'http://127.0.0.1:5175',
           'http://127.0.0.1:3001'
         ];
 
@@ -45,8 +51,8 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
-      // Allow during development, block in production
-      callback(process.env.NODE_ENV === 'production' ? new Error('Not allowed by CORS') : null, true);
+      // Allow all origins during development
+      callback(null, true);
     }
   },
   credentials: true,
@@ -351,6 +357,9 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/posts', require('./routes/posts'));
 app.use('/api/members', require('./routes/member'));
 app.use('/api/candidates', require('./routes/candidates'));
+app.use('/api/candidate-feedback', require('./routes/candidateFeedbackAdmin'));
+// Polling feature routes
+app.use('/api/polls', require('./routes/polls'));
 // Health check route - Enhanced
 app.get('/api/health', (req, res) => {
   res.status(200).json({

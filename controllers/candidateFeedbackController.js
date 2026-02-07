@@ -359,3 +359,132 @@ exports.deleteCandidateFeedback = async (req, res) => {
     return res.status(500).json({ message: 'Failed to delete feedback', error: err.message });
   }
 };
+
+/**
+ * GET /api/candidate-feedback/admin
+ * Get all feedback across all candidates (admin view)
+ */
+exports.getAllCandidateFeedbackAdmin = async (req, res) => {
+  try {
+    const { page: pageStr, limit: limitStr, status, candidateId } = req.query;
+
+    const page = Math.max(parseInt(pageStr || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(limitStr || '20', 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    if (status && ['pending', 'approved', 'rejected'].includes(status)) {
+      filter.status = status;
+    }
+    if (candidateId && mongoose.isValidObjectId(candidateId)) {
+      filter.candidate = candidateId;
+    }
+
+    const [items, total] = await Promise.all([
+      CandidateFeedback.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('candidate', 'personalInfo.fullName personalInfo.fullName_np personalInfo.profilePhoto')
+        .populate('user', 'name email'),
+      CandidateFeedback.countDocuments(filter)
+    ]);
+
+    // Get stats
+    const stats = await CandidateFeedback.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const statsSummary = {
+      total: 0,
+      pending: 0,
+      approved: 0,
+      rejected: 0
+    };
+
+    stats.forEach(s => {
+      statsSummary[s._id] = s.count;
+      statsSummary.total += s.count;
+    });
+
+    return res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      stats: statsSummary,
+      data: items
+    });
+  } catch (err) {
+    console.error('Error fetching all feedback:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch feedback', error: err.message });
+  }
+};
+
+/**
+ * DELETE /api/candidate-feedback/admin/:feedbackId
+ * Delete feedback by ID (admin)
+ */
+exports.deleteFeedbackById = async (req, res) => {
+  try {
+    const { feedbackId } = req.params;
+
+    if (!mongoose.isValidObjectId(feedbackId)) {
+      return res.status(400).json({ success: false, message: 'Invalid feedback id' });
+    }
+
+    const result = await CandidateFeedback.findByIdAndDelete(feedbackId);
+
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Feedback not found' });
+    }
+
+    return res.json({ success: true, message: 'Feedback deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting feedback:', err);
+    return res.status(500).json({ success: false, message: 'Failed to delete feedback', error: err.message });
+  }
+};
+
+/**
+ * PATCH /api/candidate-feedback/admin/:feedbackId
+ * Update feedback status by ID (admin)
+ */
+exports.updateFeedbackById = async (req, res) => {
+  try {
+    const { feedbackId } = req.params;
+    const { status, isPublic } = req.body;
+
+    if (!mongoose.isValidObjectId(feedbackId)) {
+      return res.status(400).json({ success: false, message: 'Invalid feedback id' });
+    }
+
+    if (status && !['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const updates = {};
+    if (status) updates.status = status;
+    if (isPublic !== undefined) updates.isPublic = isPublic;
+
+    const feedback = await CandidateFeedback.findByIdAndUpdate(
+      feedbackId,
+      updates,
+      { new: true }
+    ).populate('candidate', 'personalInfo.fullName personalInfo.fullName_np');
+
+    if (!feedback) {
+      return res.status(404).json({ success: false, message: 'Feedback not found' });
+    }
+
+    return res.json({ success: true, message: 'Feedback updated successfully', data: feedback });
+  } catch (err) {
+    console.error('Error updating feedback:', err);
+    return res.status(500).json({ success: false, message: 'Failed to update feedback', error: err.message });
+  }
+};
