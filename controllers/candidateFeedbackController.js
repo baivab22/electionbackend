@@ -49,6 +49,13 @@ exports.submitCandidateFeedback = async (req, res) => {
       user: req.user?.id || null
     };
 
+    // Auto-approve feedback only when explicitly requested via env var
+    const autoApprove = process.env.AUTO_APPROVE_FEEDBACK === 'true';
+    if (autoApprove) {
+      feedbackData.status = 'approved';
+      feedbackData.isPublic = true;
+    }
+
     // For non-anonymous feedback
     if (!feedbackData.anonymous) {
       if (!email) {

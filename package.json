@@ -19,6 +19,7 @@
   "author": "Alex (MGX)",
   "license": "MIT",
   "dependencies": {
+    "socket.io": "^4.7.2",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.5",

@@ -96,6 +96,18 @@ exports.vote = async (req, res) => {
     choice.votesCount = (choice.votesCount || 0) + 1;
     await poll.save();
 
+    // Emit realtime update to connected clients for this poll
+    try {
+      const io = req.app && req.app.get && req.app.get('io');
+      if (io) {
+        const totalVotes = poll.choices.reduce((s, c) => s + (c.votesCount || 0), 0);
+        const choices = poll.choices.map(c => ({ id: c._id, label: c.label, votes: c.votesCount || 0, percentage: totalVotes > 0 ? ((c.votesCount || 0) / totalVotes * 100).toFixed(2) : '0.00' }));
+        io.to(`poll:${pollId}`).emit('poll:updated', { pollId: poll._id, title: poll.title, totalVotes, choices });
+      }
+    } catch (emitErr) {
+      console.error('Error emitting poll update:', emitErr);
+    }
+
     res.status(201).json({ success: true, message: 'Vote recorded', data: { voteId: vote._id } });
   } catch (error) {
     console.error('Error voting:', error);

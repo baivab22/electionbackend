@@ -411,6 +411,33 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on ${PORT}`);
 });
 
+// Socket.IO for realtime poll updates
+const { Server } = require('socket.io');
+const io = new Server(server, {
+  cors: {
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://localhost:5174',
+      'http://localhost:5175'
+    ],
+    methods: ['GET', 'POST']
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('Socket connected:', socket.id);
+  socket.on('joinPoll', (pollId) => {
+    socket.join(`poll:${pollId}`);
+  });
+  socket.on('leavePoll', (pollId) => {
+    socket.leave(`poll:${pollId}`);
+  });
+});
+
+// expose io to controllers
+app.set('io', io);
+
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err, promise) => {
   console.log(`❌ Error: ${err.message}`);
