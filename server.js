@@ -22,10 +22,13 @@ const app = express();
 // ===== CORS CONFIGURATION =====
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
+    // Allow requests with no origin (mobile apps, Postman, server-side)
     if (!origin) return callback(null, true);
 
-    const allowedOrigins = process.env.NODE_ENV === 'production'
+    // Normalize origin (strip trailing slash)
+    const normalizedOrigin = origin.replace(/\/+$/g, '');
+
+    const allowedOrigins = (process.env.NODE_ENV === 'production'
       ? [
           'https://ictforum-frontend-j4i4dhx0i-baivabs-projects-31f870fd.vercel.app',
           'https://www.ictforumnepal.com',
@@ -45,15 +48,31 @@ const corsOptions = {
           'http://127.0.0.1:5174',
           'http://127.0.0.1:5175',
           'http://127.0.0.1:3001'
-        ];
+        ]).map(o => o.replace(/\/+$/g, ''));
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      // Allow all origins during development
-      callback(null, true);
+    // Match exact or allow subdomains of allowed origins
+    const isAllowed = allowedOrigins.some(a => {
+      if (a === normalizedOrigin) return true;
+      // allow subdomain matches like https://sub.example.com for example.com
+      try {
+        const originHost = new URL(normalizedOrigin).hostname;
+        const allowedHost = new URL(a).hostname;
+        return originHost === allowedHost || originHost.endsWith('.' + allowedHost);
+      } catch (e) {
+        return false;
+      }
+    });
+
+    if (isAllowed) {
+      return callback(null, true);
     }
+
+    console.log('CORS blocked origin:', origin);
+    // In production, reject unknown origins; in development allow for convenience
+    if (process.env.NODE_ENV === 'production') {
+      return callback(new Error('Not allowed by CORS'));
+    }
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
