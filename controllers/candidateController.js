@@ -153,31 +153,32 @@ exports.createCandidate = async (req, res) => {
     const campaign = parseNestedObject(req.body, 'campaign') || req.body.campaign || {};
     const documents = parseNestedObject(req.body, 'documents') || req.body.documents || {};
 
-    // Handle file uploads - store Cloudinary URLs
+    // Handle file uploads - store Cloudinary URLs, prioritize URL from request body
     let profilePhotoPath = personalInfo.profilePhoto || null;
     let electionSymbolImagePath = politicalInfo.electionSymbolImage || null;
     let manifestoBrochurePath = documents.manifestoBrochure || null;
 
+    // Only use uploaded files if no URL provided in request body
     if (req.files) {
       // Profile photo upload (Cloudinary URL)
-      if (req.files.profilePhoto && req.files.profilePhoto[0]) {
+      if (!profilePhotoPath && req.files.profilePhoto && req.files.profilePhoto[0]) {
         profilePhotoPath = req.files.profilePhoto[0].path; // Cloudinary secure URL
         console.log('✅ Profile photo uploaded to Cloudinary:', profilePhotoPath);
       }
       // Election symbol image upload (Cloudinary URL)
-      if (req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
+      if (!electionSymbolImagePath && req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
         electionSymbolImagePath = req.files.electionSymbolImage[0].path; // Cloudinary secure URL
         console.log('✅ Election symbol uploaded to Cloudinary:', electionSymbolImagePath);
       }
       // Manifesto brochure upload (Cloudinary URL)
-      if (req.files.manifestoBrochure && req.files.manifestoBrochure[0]) {
+      if (!manifestoBrochurePath && req.files.manifestoBrochure && req.files.manifestoBrochure[0]) {
         manifestoBrochurePath = req.files.manifestoBrochure[0].path; // Cloudinary secure URL
         console.log('✅ Manifesto brochure uploaded to Cloudinary:', manifestoBrochurePath);
       }
     }
 
     // Handle single file upload
-    if (req.file) {
+    if (!profilePhotoPath && req.file) {
       profilePhotoPath = req.file.path; // Cloudinary secure URL
       console.log('✅ Single file uploaded to Cloudinary:', profilePhotoPath);
     }
@@ -338,16 +339,18 @@ exports.updateCandidate = async (req, res) => {
     const documents = parseNestedObject(req.body, 'documents') || req.body.documents;
 
     // Handle file uploads - delete old images and store new Cloudinary URLs
-    let profilePhotoPath = candidate.personalInfo?.profilePhoto;
-    let electionSymbolImagePath = candidate.politicalInfo?.electionSymbolImage;
+    let profilePhotoPath = personalInfo?.profilePhoto || candidate.personalInfo?.profilePhoto;
+    let electionSymbolImagePath = politicalInfo?.electionSymbolImage || candidate.politicalInfo?.electionSymbolImage;
     let manifestoBrochurePath = candidate.documents?.manifestoBrochure;
 
+    // Only use uploaded file if no URL provided in request body
     if (req.files) {
       // New profile photo - delete old one from Cloudinary (if credentials available)
-      if (req.files.profilePhoto && req.files.profilePhoto[0]) {
-        if (profilePhotoPath && /res\.cloudinary\.com/.test(profilePhotoPath) && hasFullCredentials) {
+      if (!profilePhotoPath && req.files.profilePhoto && req.files.profilePhoto[0]) {
+        const oldPhotoPath = candidate.personalInfo?.profilePhoto;
+        if (oldPhotoPath && /res\.cloudinary\.com/.test(oldPhotoPath) && hasFullCredentials) {
           try {
-            const match = profilePhotoPath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+            const match = oldPhotoPath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
             if (match?.[1]) {
               await cloudinary.uploader.destroy(match[1]);
               console.log('🗑️ Deleted old profile photo from Cloudinary');
@@ -361,7 +364,7 @@ exports.updateCandidate = async (req, res) => {
       }
       
       // New election symbol - delete old one from Cloudinary (if credentials available)
-      if (req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
+      if (!electionSymbolImagePath && req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
         if (electionSymbolImagePath && /res\.cloudinary\.com/.test(electionSymbolImagePath) && hasFullCredentials) {
           try {
             const match = electionSymbolImagePath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
