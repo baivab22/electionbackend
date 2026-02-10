@@ -1,7 +1,51 @@
 const Candidate = require('../models/Candidate');
 const { validationResult } = require('express-validator');
-const cloudinary = require('cloudinary').v2;
+const { cloudinary, hasFullCredentials } = require('../config/cloudinary.config');
 const fs = require('fs');
+
+/**
+ * Helper: Delete Cloudinary images from candidate
+ * @param {Object} candidate - Candidate document
+ */
+async function deleteCloudinaryImages(candidate) {
+  // Skip if we don't have API credentials
+  if (!hasFullCredentials) {
+    console.log('ℹ️  Skipping Cloudinary cleanup (API credentials not configured)');
+    return;
+  }
+  
+  const imagesToDelete = [];
+  
+  // Collect profile photo
+  if (candidate.personalInfo?.profilePhoto && /res\.cloudinary\.com/.test(candidate.personalInfo.profilePhoto)) {
+    imagesToDelete.push(candidate.personalInfo.profilePhoto);
+  }
+  
+  // Collect election symbol
+  if (candidate.politicalInfo?.electionSymbolImage && /res\.cloudinary\.com/.test(candidate.politicalInfo.electionSymbolImage)) {
+    imagesToDelete.push(candidate.politicalInfo.electionSymbolImage);
+  }
+  
+  // Collect manifesto brochure if it's an image
+  if (candidate.documents?.manifestoBrochure && /res\.cloudinary\.com/.test(candidate.documents.manifestoBrochure)) {
+    imagesToDelete.push(candidate.documents.manifestoBrochure);
+  }
+  
+  // Delete all found images
+  for (const imageUrl of imagesToDelete) {
+    try {
+      // Extract public_id from Cloudinary URL
+      const match = imageUrl.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+      if (match && match[1]) {
+        const publicId = match[1];
+        await cloudinary.uploader.destroy(publicId);
+        console.log('🗑️ Deleted Cloudinary image:', publicId);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to delete Cloudinary image:', imageUrl, err.message);
+    }
+  }
+}
 
 // Helper function to parse nested objects from FormData
 const parseNestedObject = (obj, prefix) => {
@@ -109,24 +153,33 @@ exports.createCandidate = async (req, res) => {
     const campaign = parseNestedObject(req.body, 'campaign') || req.body.campaign || {};
     const documents = parseNestedObject(req.body, 'documents') || req.body.documents || {};
 
-    // Handle file uploads
+    // Handle file uploads - store Cloudinary URLs
     let profilePhotoPath = personalInfo.profilePhoto || null;
     let electionSymbolImagePath = politicalInfo.electionSymbolImage || null;
+    let manifestoBrochurePath = documents.manifestoBrochure || null;
 
     if (req.files) {
-      // Profile photo upload
+      // Profile photo upload (Cloudinary URL)
       if (req.files.profilePhoto && req.files.profilePhoto[0]) {
-        profilePhotoPath = req.files.profilePhoto[0].path;
+        profilePhotoPath = req.files.profilePhoto[0].path; // Cloudinary secure URL
+        console.log('✅ Profile photo uploaded to Cloudinary:', profilePhotoPath);
       }
-      // Election symbol image upload
+      // Election symbol image upload (Cloudinary URL)
       if (req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
-        electionSymbolImagePath = req.files.electionSymbolImage[0].path;
+        electionSymbolImagePath = req.files.electionSymbolImage[0].path; // Cloudinary secure URL
+        console.log('✅ Election symbol uploaded to Cloudinary:', electionSymbolImagePath);
+      }
+      // Manifesto brochure upload (Cloudinary URL)
+      if (req.files.manifestoBrochure && req.files.manifestoBrochure[0]) {
+        manifestoBrochurePath = req.files.manifestoBrochure[0].path; // Cloudinary secure URL
+        console.log('✅ Manifesto brochure uploaded to Cloudinary:', manifestoBrochurePath);
       }
     }
 
     // Handle single file upload
     if (req.file) {
-      profilePhotoPath = req.file.path;
+      profilePhotoPath = req.file.path; // Cloudinary secure URL
+      console.log('✅ Single file uploaded to Cloudinary:', profilePhotoPath);
     }
 
     // Build candidate data
@@ -152,7 +205,10 @@ exports.createCandidate = async (req, res) => {
       visionGoals,
       socialMedia,
       campaign,
-      documents,
+      documents: {
+        ...documents,
+        manifestoBrochure: manifestoBrochurePath
+      },
       isActive: req.body.isActive === 'true' || req.body.isActive === true,
       isVerified: false, // Default to not verified
       createdBy: req.user ? req.user.id : null
@@ -281,21 +337,79 @@ exports.updateCandidate = async (req, res) => {
     const campaign = parseNestedObject(req.body, 'campaign') || req.body.campaign;
     const documents = parseNestedObject(req.body, 'documents') || req.body.documents;
 
-    // Handle file uploads
+    // Handle file uploads - delete old images and store new Cloudinary URLs
     let profilePhotoPath = candidate.personalInfo?.profilePhoto;
     let electionSymbolImagePath = candidate.politicalInfo?.electionSymbolImage;
+    let manifestoBrochurePath = candidate.documents?.manifestoBrochure;
 
     if (req.files) {
+      // New profile photo - delete old one from Cloudinary (if credentials available)
       if (req.files.profilePhoto && req.files.profilePhoto[0]) {
-        profilePhotoPath = req.files.profilePhoto[0].path;
+        if (profilePhotoPath && /res\.cloudinary\.com/.test(profilePhotoPath) && hasFullCredentials) {
+          try {
+            const match = profilePhotoPath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+            if (match?.[1]) {
+              await cloudinary.uploader.destroy(match[1]);
+              console.log('🗑️ Deleted old profile photo from Cloudinary');
+            }
+          } catch (err) {
+            console.warn('⚠️ Failed to delete old profile photo:', err.message);
+          }
+        }
+        profilePhotoPath = req.files.profilePhoto[0].path; // New Cloudinary URL
+        console.log('✅ New profile photo uploaded to Cloudinary:', profilePhotoPath);
       }
+      
+      // New election symbol - delete old one from Cloudinary (if credentials available)
       if (req.files.electionSymbolImage && req.files.electionSymbolImage[0]) {
-        electionSymbolImagePath = req.files.electionSymbolImage[0].path;
+        if (electionSymbolImagePath && /res\.cloudinary\.com/.test(electionSymbolImagePath) && hasFullCredentials) {
+          try {
+            const match = electionSymbolImagePath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+            if (match?.[1]) {
+              await cloudinary.uploader.destroy(match[1]);
+              console.log('🗑️ Deleted old election symbol from Cloudinary');
+            }
+          } catch (err) {
+            console.warn('⚠️ Failed to delete old election symbol:', err.message);
+          }
+        }
+        electionSymbolImagePath = req.files.electionSymbolImage[0].path; // New Cloudinary URL
+        console.log('✅ New election symbol uploaded to Cloudinary:', electionSymbolImagePath);
+      }
+      
+      // New manifesto brochure - delete old one from Cloudinary (if credentials available)
+      if (req.files.manifestoBrochure && req.files.manifestoBrochure[0]) {
+        if (manifestoBrochurePath && /res\.cloudinary\.com/.test(manifestoBrochurePath) && hasFullCredentials) {
+          try {
+            const match = manifestoBrochurePath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+            if (match?.[1]) {
+              await cloudinary.uploader.destroy(match[1]);
+              console.log('🗑️ Deleted old manifesto brochure from Cloudinary');
+            }
+          } catch (err) {
+            console.warn('⚠️ Failed to delete old manifesto brochure:', err.message);
+          }
+        }
+        manifestoBrochurePath = req.files.manifestoBrochure[0].path; // New Cloudinary URL
+        console.log('✅ New manifesto brochure uploaded to Cloudinary:', manifestoBrochurePath);
       }
     }
 
     if (req.file) {
-      profilePhotoPath = req.file.path;
+      // Delete old profile photo if exists (if credentials available)
+      if (profilePhotoPath && /res\.cloudinary\.com/.test(profilePhotoPath) && hasFullCredentials) {
+        try {
+          const match = profilePhotoPath.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+          if (match?.[1]) {
+            await cloudinary.uploader.destroy(match[1]);
+            console.log('🗑️ Deleted old profile photo from Cloudinary');
+          }
+        } catch (err) {
+          console.warn('⚠️ Failed to delete old profile photo:', err.message);
+        }
+      }
+      profilePhotoPath = req.file.path; // New Cloudinary URL
+      console.log('✅ New profile photo uploaded to Cloudinary:', profilePhotoPath);
     }
 
     // Update fields if provided
@@ -333,7 +447,7 @@ exports.updateCandidate = async (req, res) => {
     if (visionGoals) candidate.visionGoals = { ...candidate.visionGoals?.toObject?.() || candidate.visionGoals, ...visionGoals };
     if (socialMedia) candidate.socialMedia = { ...candidate.socialMedia?.toObject?.() || candidate.socialMedia, ...socialMedia };
     if (campaign) candidate.campaign = { ...candidate.campaign?.toObject?.() || candidate.campaign, ...campaign };
-    if (documents) candidate.documents = { ...candidate.documents?.toObject?.() || candidate.documents, ...documents };
+    if (documents) candidate.documents = { ...candidate.documents?.toObject?.() || candidate.documents, ...documents, manifestoBrochure: manifestoBrochurePath };
     
     if (req.body.isActive !== undefined) candidate.isActive = req.body.isActive === 'true' || req.body.isActive === true;
     if (req.body.isVerified !== undefined) candidate.isVerified = req.body.isVerified === 'true' || req.body.isVerified === true;
@@ -360,7 +474,7 @@ exports.updateCandidate = async (req, res) => {
 // @access  Private (Admin only)
 exports.deleteCandidate = async (req, res) => {
   try {
-    const candidate = await Candidate.findByIdAndDelete(req.params.id);
+    const candidate = await Candidate.findById(req.params.id);
 
     if (!candidate) {
       return res.status(404).json({
@@ -369,10 +483,22 @@ exports.deleteCandidate = async (req, res) => {
       });
     }
 
+    // Delete all associated Cloudinary images before deleting candidate
+    try {
+      await deleteCloudinaryImages(candidate);
+      console.log('✅ All Cloudinary images deleted for candidate:', candidate._id);
+    } catch (err) {
+      console.warn('⚠️ Error deleting Cloudinary images:', err.message);
+      // Continue with deletion even if image cleanup fails
+    }
+
+    // Delete the candidate from database
+    await candidate.deleteOne();
+
     res.status(200).json({
       success: true,
-      message: 'Candidate deleted successfully',
-      data: candidate
+      message: 'Candidate and associated images deleted successfully',
+      data: { id: candidate._id }
     });
   } catch (error) {
     console.error('Error deleting candidate:', error);

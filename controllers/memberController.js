@@ -1,6 +1,45 @@
 const Member = require('../models/member');
+const { cloudinary, hasFullCredentials } = require('../config/cloudinary.config');
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * Helper: Delete Cloudinary documents from member
+ * @param {Object} member - Member document
+ */
+async function deleteCloudinaryDocuments(member) {
+  // Skip if we don't have API credentials
+  if (!hasFullCredentials) {
+    console.log('ℹ️  Skipping Cloudinary cleanup (API credentials not configured)');
+    return;
+  }
+  
+  if (!member.documents) return;
+  
+  const documentsToDelete = [];
+  
+  // Collect all Cloudinary URLs from documents
+  for (const [key, doc] of Object.entries(member.documents)) {
+    if (doc?.path && /res\.cloudinary\.com/.test(doc.path)) {
+      documentsToDelete.push(doc.path);
+    }
+  }
+  
+  // Delete all found documents from Cloudinary
+  for (const docUrl of documentsToDelete) {
+    try {
+      // Extract public_id from Cloudinary URL
+      const match = docUrl.match(/\/upload\/(?:v\d+\/)?(.*?)(?:\.[a-zA-Z0-9]+)?$/);
+      if (match && match[1]) {
+        const publicId = match[1];
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
+        console.log('🗑️ Deleted Cloudinary document:', publicId);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to delete Cloudinary document:', docUrl, err.message);
+    }
+  }
+}
 
 // Create new member application
 const createMember = async (req, res) => {
@@ -35,32 +74,36 @@ const createMember = async (req, res) => {
       });
     }
 
-    // Handle file uploads
+    // Handle file uploads - store Cloudinary URLs
     const documents = {};
     if (req.files) {
       if (req.files.citizenshipCopy) {
         documents.citizenshipCopy = {
-          filename: req.files.citizenshipCopy[0].filename,
-          path: req.files.citizenshipCopy[0].path
+          filename: req.files.citizenshipCopy[0].filename || req.files.citizenshipCopy[0].originalname,
+          path: req.files.citizenshipCopy[0].path // Cloudinary URL
         };
+        console.log('✅ Citizenship copy uploaded to Cloudinary:', documents.citizenshipCopy.path);
       }
       if (req.files.photo) {
         documents.photo = {
-          filename: req.files.photo[0].filename,
-          path: req.files.photo[0].path
+          filename: req.files.photo[0].filename || req.files.photo[0].originalname,
+          path: req.files.photo[0].path // Cloudinary URL
         };
+        console.log('✅ Photo uploaded to Cloudinary:', documents.photo.path);
       }
       if (req.files.recommendationLetter) {
         documents.recommendationLetter = {
-          filename: req.files.recommendationLetter[0].filename,
-          path: req.files.recommendationLetter[0].path
+          filename: req.files.recommendationLetter[0].filename || req.files.recommendationLetter[0].originalname,
+          path: req.files.recommendationLetter[0].path // Cloudinary URL
         };
+        console.log('✅ Recommendation letter uploaded to Cloudinary:', documents.recommendationLetter.path);
       }
       if (req.files.resume) {
         documents.resume = {
-          filename: req.files.resume[0].filename,
-          path: req.files.resume[0].path
+          filename: req.files.resume[0].filename || req.files.resume[0].originalname,
+          path: req.files.resume[0].path // Cloudinary URL
         };
+        console.log('✅ Resume uploaded to Cloudinary:', documents.resume.path);
       }
     }
 
@@ -267,20 +310,21 @@ const deleteMember = async (req, res) => {
       });
     }
 
-    // Delete associated files
-    if (member.documents) {
-      Object.values(member.documents).forEach(doc => {
-        if (doc && doc.path && fs.existsSync(doc.path)) {
-          fs.unlinkSync(doc.path);
-        }
-      });
+    // Delete all associated Cloudinary documents
+    try {
+      await deleteCloudinaryDocuments(member);
+      console.log('✅ All Cloudinary documents deleted for member:', member._id);
+    } catch (err) {
+      console.warn('⚠️ Error deleting Cloudinary documents:', err.message);
+      // Continue with deletion even if document cleanup fails
     }
 
+    // Delete the member from database
     await Member.findByIdAndDelete(req.params.id);
 
     res.json({
       success: true,
-      message: 'Member deleted successfully'
+      message: 'Member and associated documents deleted successfully'
     });
 
   } catch (error) {
