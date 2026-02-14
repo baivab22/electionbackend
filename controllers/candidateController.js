@@ -80,7 +80,6 @@ exports.getAllCandidates = async (req, res) => {
     if (candidacyLevel) query['politicalInfo.candidacyLevel'] = candidacyLevel;
 
     const candidates = await Candidate.find(query)
-      .select('-documents') // Exclude document fields from list
       .sort({ createdAt: -1 });
 
     res.status(200).json({

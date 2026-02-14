@@ -379,6 +379,8 @@ app.use('/api/candidates', require('./routes/candidates'));
 app.use('/api/candidate-feedback', require('./routes/candidateFeedbackAdmin'));
 // Polling feature routes
 app.use('/api/polls', require('./routes/polls'));
+// Volunteer registration routes
+app.use('/api/volunteers', require('./routes/volunteers'));
 // Health check route - Enhanced
 app.get('/api/health', (req, res) => {
   res.status(200).json({
