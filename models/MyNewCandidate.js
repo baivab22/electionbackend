@@ -1,9 +1,6 @@
-
-
-
 const mongoose = require('mongoose');
 
-const candidateSchema = new mongoose.Schema({
+const myNewCandidateSchema = new mongoose.Schema({
   ageDetails: { type: String, default: '' },
   profilepicture: { type: String, default: '' },
   area: { type: String, default: '' },
@@ -11,11 +8,8 @@ const candidateSchema = new mongoose.Schema({
   detaildescription: { type: String, default: '' },
   politicalBehaviour: { type: String, default: '' },
   politicalHIstory: { type: String, default: '' },
-  politicaltimeline: { type: String, default: '' },
-  candidancytype: { type: String, default: '' },
-  clustername: { type: String, default: '' },
+  politicaltimeline: { type: String, default: '' }
   // Add any additional fields as needed
 }, { timestamps: true, collection: 'mynewcandidate' });
 
-module.exports = mongoose.model('Candidate', candidateSchema);
-
+module.exports = mongoose.model('mynewcandidate', myNewCandidateSchema);

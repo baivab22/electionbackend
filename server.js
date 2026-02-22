@@ -376,6 +376,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/posts', require('./routes/posts'));
 app.use('/api/members', require('./routes/member'));
 app.use('/api/candidates', require('./routes/candidates'));
+app.use('/api/samanupatik', require('./routes/samanupatik'));
 app.use('/api/candidate-feedback', require('./routes/candidateFeedbackAdmin'));
 // Polling feature routes
 app.use('/api/polls', require('./routes/polls'));
